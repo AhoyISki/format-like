@@ -36,8 +36,8 @@
 //!     text
 //! );
 //! # macro parse_str($value:expr, $str:literal) {{ $value }}
-//! # macro parse_interpolation($value:expr, $added:expr, $modif:literal) {{ $value }}
-//! # macro parse_comment($value:expr, $added:expr, $modif:literal) {{ $value }}
+//! # macro parse_interpolation($value:expr, $modif:literal, $added:expr) {{ $value }}
+//! # macro parse_comment($value:expr, $modif:literal, $added:expr) {{ $value }}
 //! ```
 //!
 //! In this example, the `{}` should work as intended, but you also
@@ -56,13 +56,13 @@
 //!     commented_string
 //! }}
 //!
-//! macro parse_interpolation($value:expr, $added:expr, $modif:literal) {{
+//! macro parse_interpolation($value:expr, $modif:literal, $added:expr) {{
 //!     let CommentedString(string, comments) = $value;
 //!     let string = format!(concat!("{}{", $modif, "}"), string, $added);
 //!     CommentedString(string, comments)
 //! }}
 //!
-//! macro parse_comment($value:expr, $added:expr, $_modif:literal) {{
+//! macro parse_comment($value:expr, $_modif:literal, $added:expr) {{
 //!     let mut commented_string = $value;
 //!     commented_string
 //!         .1
@@ -126,13 +126,13 @@
 //!     commented_string
 //! }}
 //!
-//! macro parse_interpolation($value:expr, $added:expr, $modif:literal) {{
+//! macro parse_interpolation($value:expr, $modif:literal, $added:expr) {{
 //!     let CommentedString(string, comments) = $value;
 //!     let string = format!(concat!("{}{", $modif, "}"), string, $added);
 //!     CommentedString(string, comments)
 //! }}
 //!
-//! macro parse_comment($value:expr, $added:expr, $_modif:literal) {{
+//! macro parse_comment($value:expr, $_modif:literal, $added:expr) {{
 //!     let mut commented_string = $value;
 //!     commented_string.1.push((commented_string.0.len(), $added.to_string()));
 //!     commented_string
@@ -156,7 +156,7 @@
 //!
 //! ```rust
 //! #![feature(decl_macro)]
-//! macro parse_comment($value:expr, $($identifier:ident).*, $modif:literal) {{
+//! macro parse_comment($value:expr, $modif:literal, $($identifier:ident).*) {{
 //!     // innards
 //! }}
 //! ```
@@ -261,13 +261,13 @@ use syn::{
 ///     commented_string
 /// }}
 ///
-/// macro parse_interpolation($value:expr, $added:expr, $modif:literal) {{
+/// macro parse_interpolation($value:expr, $modif:literal, $added:expr) {{
 ///     let CommentedString(string, comments) = $value;
 ///     let string = format!(concat!("{}{", $modif, "}"), string, $added);
 ///     CommentedString(string, comments)
 /// }}
 ///
-/// macro parse_comment($value:expr, $added:expr, $_modif:literal) {{
+/// macro parse_comment($value:expr, $_modif:literal, $added:expr) {{
 ///     let mut commented_string = $value;
 ///     commented_string.1.push((commented_string.0.len(), $added.to_string()));
 ///     commented_string
@@ -461,7 +461,7 @@ pub fn format_like(input: TokenStream) -> TokenStream {
                     let parser = &fmt_like.arg_parsers[p].parser;
 
                     quote! {
-                        #parser!(#token_stream, #expr, #modif)
+                        #parser!(#token_stream, #modif, #expr)
                     }
                 } else {
                     let npl = if positional_needed == 1 { "" } else { "s" };
@@ -484,7 +484,7 @@ pub fn format_like(input: TokenStream) -> TokenStream {
                 let parser = &fmt_like.arg_parsers[p].parser;
 
                 quote! {
-                    #parser!(#token_stream, #(#idents).*, #modif)
+                    #parser!(#token_stream, #modif, #(#idents).*)
                 }
             }
         }
