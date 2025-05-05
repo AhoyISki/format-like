@@ -34,7 +34,7 @@
 //!     parse_str,
 //!     [('{', parse_interpolation, false), ('<', parse_comment, true)],
 //!     CommentedString(String::new(), Vec::new()),
-//!     "This is <comment>worng {}, and this is the end of the range {range.end}",
+//!     "This is <comment>regluar {}, interpolated and commented {range.end}",
 //!     text
 //! );
 //! # macro parse_str($value:expr, $str:literal) {{ $value }}
@@ -101,14 +101,14 @@
 //! let range = 0..usize::MAX;
 //!
 //! let commented_string = commented_string!(
-//!     "This is <comment>worng {}, and this is the end of the range {range.end}",
+//!     "This is <comment>regluar {}, interpolated and commented {range.end}",
 //!     text
 //! );
 //!
 //! assert_eq!(
 //!     commented_string,
 //!     CommentedString(
-//!         "This is worng text, and this is the end of the range 18446744073709551615".to_string(),
+//!         "This is regluar text, interpolated and commented 18446744073709551615".to_string(),
 //!         vec![(8, "there is an error in this word".to_string())]
 //!     )
 //! );
