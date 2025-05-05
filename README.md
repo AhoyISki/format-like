@@ -16,7 +16,9 @@ inside `{}` pairs, instead of calling something like
 
 Additionaly, it lets you create 3 other types of bracket pairs:
 `()`, `[]` and `<>`, so you can interpret things in even more
-ways!
+ways! This does of course come with the regular escaping that the
+[`format!`][__link2] macro does, so `{{` is escaped to just `{`, the same
+being the case for the other delimiters as well.
 
 Here’s how it works:
 
@@ -41,7 +43,7 @@ let commented_string = format_like!(
 In this example, the `{}` should work as intended, but you also
 have access to `<>` interpolation. Inside `<>`, a comment will be
 added, with the associated `usize` being its position in the
-[`String`][__link2].
+[`String`][__link3].
 
 This will all be done through the `parse_str`,
 `parse_interpolation` and `parse_comment` macros:
@@ -54,13 +56,13 @@ macro parse_str($value:expr, $str:literal) {{
     commented_string
 }}
 
-macro parse_interpolation($value:expr, $added:expr, $modif:literal) {{
+macro parse_interpolation($value:expr, $modif:literal, $added:expr) {{
     let CommentedString(string, comments) = $value;
     let string = format!(concat!("{}{", $modif, "}"), string, $added);
     CommentedString(string, comments)
 }}
 
-macro parse_comment($value:expr, $added:expr, $_modif:literal) {{
+macro parse_comment($value:expr, $_modif:literal, $added:expr) {{
     let mut commented_string = $value;
     commented_string
         .1
@@ -76,9 +78,8 @@ and `{}` pairs, respectively.
 
 `parse_comment` and `parse_interpolation` must have three
 parameters, one for the `value` being modified (in this case, a
-`CommentedString`), one for the object being added (it’s
-[`Display`][__link3] objects in this case, but it could be anything else),
-and a modifier (`"?", "#?", ".3", etc), which might come after a `“:”\` is found in the pair.
+`CommentedString`), one for the modifier (`"?", "#?", ".3", etc), which might come after a `“:”` in the pair. and one for the object being added (it's [`Display\`\] objects in this case, but
+it could be anything else).
 
 Now, as I mentioned earlier, this crate is meant for you to create
 *your own* format like macros, so you should package all of this
@@ -123,13 +124,13 @@ macro parse_str($value:expr, $str:literal) {{
     commented_string
 }}
 
-macro parse_interpolation($value:expr, $added:expr, $modif:literal) {{
+macro parse_interpolation($value:expr, $modif:literal, $added:expr) {{
     let CommentedString(string, comments) = $value;
     let string = format!(concat!("{}{", $modif, "}"), string, $added);
     CommentedString(string, comments)
 }}
 
-macro parse_comment($value:expr, $added:expr, $_modif:literal) {{
+macro parse_comment($value:expr, $_modif:literal, $added:expr) {{
     let mut commented_string = $value;
     commented_string.1.push((commented_string.0.len(), $added.to_string()));
     commented_string
@@ -153,7 +154,7 @@ be:
 
 ```rust
 #![feature(decl_macro)]
-macro parse_comment($value:expr, $($identifier:ident).*, $modif:literal) {{
+macro parse_comment($value:expr, $modif:literal, $($identifier:ident).*) {{
     // innards
 }}
 ```
@@ -183,7 +184,7 @@ a [`String`][__link7] with formatting `Tag`s added on to it.
 It used to work like this:
 
 ```rust
-let text = text!("start" [RedColor] variable " " other_variable " ");
+let text = text!("start " [RedColor] variable " " other_variable " ");
 ```
 
 This macro was a simple declarative macro, so while it was easy to
@@ -206,8 +207,8 @@ let text = text!("start [RedColor]{variable} {other_variable} ");
 
  [__link0]: https://doc.rust-lang.org/stable/std/string/struct.String.html
  [__link1]: https://doc.rust-lang.org/stable/std/string/struct.String.html
- [__link2]: https://doc.rust-lang.org/stable/std/string/struct.String.html
- [__link3]: https://doc.rust-lang.org/stable/std/?search=fmt::Display
+ [__link2]: https://doc.rust-lang.org/stable/std/macro.format.html
+ [__link3]: https://doc.rust-lang.org/stable/std/string/struct.String.html
  [__link4]: `format_like!`
  [__link5]: `format_like!`
  [__link6]: https://github.com/AhoyISki/duat

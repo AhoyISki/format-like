@@ -14,7 +14,9 @@
 //!
 //! Additionaly, it lets you create 3 other types of bracket pairs:
 //! `()`, `[]` and `<>`, so you can interpret things in even more
-//! ways!
+//! ways! This does of course come with the regular escaping that the
+//! [`format!`] macro does, so `{{` is escaped to just `{`, the same
+//! being the case for the other delimiters as well.
 //!
 //! Here's how it works:
 //!
@@ -78,10 +80,10 @@
 //!
 //! `parse_comment` and `parse_interpolation` must have three
 //! parameters, one for the `value` being modified (in this case, a
-//! `CommentedString`), one for the object being added (it's
-//! [`Display`] objects in this case, but it could be anything else),
-//! and a modifier (`"?", "#?", ".3", etc), which might come after a
-//! `":"` is found in the pair.
+//! `CommentedString`), one for the modifier (`"?", "#?", ".3", etc),
+//! which might come after a `":"` in the pair. and one for the object
+//! being added (it's [`Display`] objects in this case, but
+//! it could be anything else).
 //!
 //! Now, as I mentioned earlier, this crate is meant for you to create
 //! _your own_ format like macros, so you should package all of this
@@ -186,7 +188,7 @@
 //! It used to work like this:
 //!
 //! ```rust,ignore
-//! let text = text!("start" [RedColor] variable " " other_variable " ");
+//! let text = text!("start " [RedColor] variable " " other_variable " ");
 //! ```
 //!
 //! This macro was a simple declarative macro, so while it was easy to
