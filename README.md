@@ -184,7 +184,7 @@ a [`String`][__link7] with formatting `Tag`s added on to it.
 It used to work like this:
 
 ```rust
-let text = text!("start " [RedColor] variable " " other_variable " ");
+let text = text!("start " [RedColor.subvalue] variable " " other_variable " ");
 ```
 
 This macro was a simple declarative macro, so while it was easy to
@@ -201,7 +201,7 @@ And now I have replaced the old `text` macro with a new version,
 based on `format_like!`, which makes for a much cleaner design:
 
 ```rust
-let text = text!("start [RedColor]{variable} {other_variable} ");
+let text = text!("start [RedColor.subvalue]{variable} {other_variable} ");
 ```
 
 
