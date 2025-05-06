@@ -337,7 +337,7 @@ pub fn format_like(input: TokenStream) -> TokenStream {
             } else if char == lhs.value() && idents.is_empty() {
                 // If arg was empty, that means the delimiter was repeated, so escape
                 // it.
-                extend_str_arg(&mut args, i);
+                extend_str_arg(&mut args, char, i - 1);
                 continue;
             }
 
@@ -414,7 +414,7 @@ pub fn format_like(input: TokenStream) -> TokenStream {
                 // Double delimiters are escaped.
                 if char == unescaped {
                     unescaped_rhs = None;
-                    extend_str_arg(&mut args, i);
+                    extend_str_arg(&mut args, char, i);
                 } else {
                     return compile_err(
                         str_span(j..j + 1),
@@ -430,7 +430,7 @@ pub fn format_like(input: TokenStream) -> TokenStream {
                 format!("invalid format string: unmatched {unescaped} found"),
             );
         } else {
-            extend_str_arg(&mut args, i);
+            extend_str_arg(&mut args, char, i);
         }
     }
 
@@ -449,9 +449,8 @@ pub fn format_like(input: TokenStream) -> TokenStream {
 
     for arg in args {
         token_stream = match arg {
-            Arg::Str(range) => {
-                let str = unsafe { str::from_utf8_unchecked(&str.as_bytes()[range.clone()]) };
-                let str = LitStr::new(str, str_span(range));
+            Arg::Str(string, range) => {
+                let str = LitStr::new(&string, str_span(range));
                 let parser = &fmt_like.str_parser;
 
                 quote! {
@@ -593,16 +592,17 @@ impl Parse for FormatLike {
 }
 
 enum Arg {
-    Str(Range<usize>),
+    Str(String, Range<usize>),
     Positional(usize, Range<usize>, proc_macro2::TokenStream),
     Inlined(usize, Vec<Ident>, proc_macro2::TokenStream),
 }
 
-fn extend_str_arg(args: &mut Vec<Arg>, start_of_char: usize) {
-    if let Some(Arg::Str(range)) = args.last_mut() {
-        range.end = start_of_char + 1;
+fn extend_str_arg(args: &mut Vec<Arg>, char: char, i: usize) {
+    if let Some(Arg::Str(string, range)) = args.last_mut() {
+        string.push(char);
+        range.end = i + 1;
     } else {
-        args.push(Arg::Str(start_of_char..start_of_char + 1))
+        args.push(Arg::Str(String::from(char), i..i + 1))
     }
 }
 
