@@ -49,6 +49,7 @@ This will all be done through the `parse_str`,
 `parse_interpolation` and `parse_comment` macros:
 
 ```rust
+// You don't need this feature, I just like it.
 #![feature(decl_macro)]
 macro parse_str($value:expr, $str:literal) {{
     let mut commented_string = $value;
@@ -86,6 +87,7 @@ Now, as I mentioned earlier, this crate is meant for you to create
 up into a single macro, like this:
 
 ```rust
+// You don't need this feature, I just like it.
 #![feature(decl_macro)]
 use format_like::format_like;
 
