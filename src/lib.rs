@@ -289,7 +289,12 @@ pub fn format_like(input: TokenStream) -> TokenStream {
     let mut push_new_ident = true;
     let mut positional_needed = 0;
 
-    let str_span = |r: Range<usize>| lit_str.token().subspan(r.start + 1..r.end + 1).unwrap();
+    let str_span = |r: Range<usize>| {
+        lit_str
+            .token()
+            .subspan(r.start + 1..r.end + 1)
+            .unwrap_or_else(|| lit_str.token().span())
+    };
 
     for (i, char) in str.char_indices() {
         if let Some((j, p, mut idents, mut modif)) = arg.take() {
