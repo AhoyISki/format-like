@@ -212,6 +212,7 @@
 //! [Duat]: https://github.com/AhoyISki/duat
 use std::ops::Range;
 
+use litrs::StringLit;
 use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
 
 /// A macro for creating format-like macros
@@ -274,7 +275,7 @@ pub fn format_like(input: TokenStream) -> TokenStream {
         Err(err) => return err,
     };
 
-    let str = fmt_like.str;
+    let str = fmt_like.str.value();
     let arg_parsers = &fmt_like.arg_parsers;
 
     let mut args = Vec::new();
@@ -284,7 +285,7 @@ pub fn format_like(input: TokenStream) -> TokenStream {
     let mut push_new_ident = true;
     let mut positional_needed = 0;
 
-    let str_span = |_r: Range<usize>| fmt_like.str_lit.span();
+    let str_span = |_r: Range<usize>| fmt_like.str_span;
 
     for (i, char) in str.char_indices() {
         if let Some((j, p, mut idents, mut modif)) = arg.take() {
@@ -295,7 +296,7 @@ pub fn format_like(input: TokenStream) -> TokenStream {
                         let str =
                             unsafe { str::from_utf8_unchecked(&str.as_bytes()[range.clone()]) };
                         let mut str = Literal::string(str);
-                        str.set_span(fmt_like.str_lit.span());
+                        str.set_span(fmt_like.str_span);
 
                         TokenStream::from(TokenTree::Literal(str))
                     }
@@ -529,8 +530,8 @@ struct FormatLike {
     str_parser: Ident,
     arg_parsers: Vec<ArgParser>,
     initial: TokenStream,
-    str: String,
-    str_lit: Literal,
+    str: StringLit<String>,
+    str_span: Span,
     exprs: Vec<TokenStream>,
 }
 
@@ -641,15 +642,11 @@ impl FormatLike {
             TokenStream::from_iter(initial)
         };
 
-        let (str, str_lit) = match stream.next() {
+        let (str, str_span) = match stream.next() {
             Some(TokenTree::Literal(literal)) => {
-                let mut str = literal.to_string();
-                if str.starts_with('"') && str.ends_with('"') {
-                    str.pop();
-                    str.remove(0);
-                    (str, literal)
-                } else {
-                    return Err(compile_err(literal.span(), "expected a string literal"));
+                match litrs::StringLit::parse(literal.to_string()) {
+                    Ok(str) => (str, literal.span()),
+                    Err(_) => return Err(compile_err(literal.span(), "expected a string literal")),
                 }
             }
             Some(other) => return Err(compile_err(other.span(), "expected a string literal")),
@@ -689,7 +686,7 @@ impl FormatLike {
             arg_parsers,
             initial,
             str,
-            str_lit,
+            str_span,
             exprs,
         })
     }
