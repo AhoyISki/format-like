@@ -1,6 +1,6 @@
 [package]
 name = "format-like"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 authors = ["AhoyISki"]
 description = "Macro for creating format-like macros with any kind of output"
@@ -12,12 +12,3 @@ categories = ["rust-patterns", "value-formatting"]
 
 [lib]
 proc-macro = true
-
-[dependencies]
-proc-macro2 = "1.0.95"
-quote = "1.0.40"
-
-[dependencies.syn]
-version = "2.0.101"
-default-features = false
-features = ["parsing", "printing", "clone-impls", "proc-macro", "full"]

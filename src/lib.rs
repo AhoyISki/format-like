@@ -212,15 +212,7 @@
 //! [Duat]: https://github.com/AhoyISki/duat
 use std::ops::Range;
 
-use proc_macro::TokenStream;
-use proc_macro2::Span;
-use quote::{format_ident, quote};
-use syn::{
-    Expr, Ident, LitBool, LitChar, LitStr, Path, Token, bracketed, parenthesized,
-    parse::{Parse, ParseBuffer},
-    parse_macro_input,
-    spanned::Spanned,
-};
+use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
 
 /// A macro for creating format-like macros
 ///
@@ -277,9 +269,12 @@ use syn::{
 /// ```
 #[proc_macro]
 pub fn format_like(input: TokenStream) -> TokenStream {
-    let fmt_like = parse_macro_input!(input as FormatLike);
-    let lit_str = &fmt_like.str;
-    let str = lit_str.value();
+    let fmt_like = match FormatLike::parse(input.into_iter()) {
+        Ok(fmt_like) => fmt_like,
+        Err(err) => return err,
+    };
+
+    let str = fmt_like.str;
     let arg_parsers = &fmt_like.arg_parsers;
 
     let mut args = Vec::new();
@@ -289,31 +284,27 @@ pub fn format_like(input: TokenStream) -> TokenStream {
     let mut push_new_ident = true;
     let mut positional_needed = 0;
 
-    let str_span = |r: Range<usize>| {
-        lit_str
-            .token()
-            .subspan(r.start + 1..r.end + 1)
-            .unwrap_or_else(|| lit_str.token().span())
-    };
+    let str_span = |_r: Range<usize>| fmt_like.str_lit.span();
 
     for (i, char) in str.char_indices() {
         if let Some((j, p, mut idents, mut modif)) = arg.take() {
-            let (lhs, rhs) = &arg_parsers[p].delims;
-            if char == *rhs {
+            let [lhs, rhs] = arg_parsers[p].delims;
+            if char == rhs {
                 let modif = match modif {
                     Some(range) => {
                         let str =
                             unsafe { str::from_utf8_unchecked(&str.as_bytes()[range.clone()]) };
-                        let str = LitStr::new(str, str_span(range));
+                        let mut str = Literal::string(str);
+                        str.set_span(fmt_like.str_lit.span());
 
-                        quote! { #str }
+                        TokenStream::from(TokenTree::Literal(str))
                     }
-                    None => quote! { "" },
+                    None => TokenStream::from(TokenTree::Literal(Literal::string(""))),
                 };
 
                 if idents.is_empty() {
                     if arg_parsers[p].inline_only {
-                        args.push(Arg::Inlined(p, Vec::new(), modif));
+                        args.push(Arg::Inlined(p, TokenStream::new(), modif));
                     } else {
                         positional_needed += 1;
                         args.push(Arg::Positional(p, j..i + 1, modif));
@@ -324,22 +315,37 @@ pub fn format_like(input: TokenStream) -> TokenStream {
                         "invalid format string: field access expected an identifier",
                     );
                 } else {
-                    let idents = idents
-                        .into_iter()
-                        .map(|range| {
-                            let mut ident = format_ident!("{}", unsafe {
-                                str::from_utf8_unchecked(&str.as_bytes()[range.clone()])
-                            });
-                            ident.set_span(str_span(range));
-                            ident
-                        })
-                        .collect();
+                    let mut stream = Vec::new();
+                    let len = idents.len();
 
-                    args.push(Arg::Inlined(p, idents, modif));
+                    for (i, (range, is_tuple_member)) in idents.into_iter().enumerate() {
+                        let str =
+                            unsafe { str::from_utf8_unchecked(&str.as_bytes()[range.clone()]) };
+
+                        stream.push(if is_tuple_member {
+                            TokenTree::Literal({
+                                let mut literal = Literal::usize_unsuffixed(str.parse().unwrap());
+                                literal.set_span(str_span(range.clone()));
+                                literal
+                            })
+                        } else {
+                            TokenTree::Ident(Ident::new(str, str_span(range.clone())))
+                        });
+
+                        if i != len - 1 {
+                            stream.push(TokenTree::Punct({
+                                let mut punct = Punct::new('.', Spacing::Alone);
+                                punct.set_span(str_span(range.end..range.end + 1));
+                                punct
+                            }));
+                        }
+                    }
+
+                    args.push(Arg::Inlined(p, TokenStream::from_iter(stream), modif));
                 }
 
                 continue;
-            } else if char == lhs.value() && idents.is_empty() {
+            } else if char == lhs && idents.is_empty() {
                 // If arg was empty, that means the delimiter was repeated, so escape
                 // it.
                 extend_str_arg(&mut args, char, i - 1);
@@ -349,33 +355,28 @@ pub fn format_like(input: TokenStream) -> TokenStream {
             // We might have mismatched delimiters
             if arg_parsers
                 .iter()
-                .any(|ap| char == ap.delims.0.value() || char == ap.delims.1)
+                .any(|ap| char == ap.delims[0] || char == ap.delims[1])
             {
-                let mut err = syn::Error::new(
-                    str_span(i..i + 1),
-                    "invalid format string: wrong match for delimiter",
-                );
-                err.combine(syn::Error::new(
-                    str_span(j..j + 1),
-                    format!("from this delimiter, expected {rhs}"),
-                ));
-                let compile_err = err.into_compile_error();
-
-                // Since this should return an Expr, we need to brace it.
-                let err = quote! {{
-                    #compile_err
-                }};
-
-                return err.into();
+                return TokenStream::from_iter([
+                    compile_err(
+                        str_span(i..i + 1),
+                        "invalid format string: wrong match for delimiter",
+                    ),
+                    compile_err(
+                        str_span(j..j + 1),
+                        format!("from this delimiter, expected {rhs}"),
+                    ),
+                ]);
             } else if char.is_alphanumeric() || char == '_' || modif.is_some() {
                 if let Some(modif) = &mut modif {
                     modif.end = i + 1;
-                } else if let Some(last) = idents.last_mut()
+                } else if let Some((range, is_tuple_member)) = idents.last_mut()
                     && !push_new_ident
                 {
-                    last.end = i + 1;
+                    *is_tuple_member &= char.is_ascii_digit();
+                    range.end = i + 1;
                 } else {
-                    idents.push(i..i + 1);
+                    idents.push((i..i + 1, char.is_ascii_digit()));
                     push_new_ident = false;
                 }
             } else if char == '.' {
@@ -407,12 +408,12 @@ pub fn format_like(input: TokenStream) -> TokenStream {
             arg = Some((j, p, idents, modif));
         } else if let Some(p) = arg_parsers
             .iter()
-            .position(|ap| char == ap.delims.0.value() || char == ap.delims.1)
+            .position(|ap| char == ap.delims[0] || char == ap.delims[1])
         {
             // If the char is a left delimiter, begin an argument.
             // If it is a right delimiter, handle dangling right parameter
             // scenarios.
-            if char == arg_parsers[p].delims.0.value() {
+            if char == arg_parsers[p].delims[0] {
                 push_new_ident = true;
                 arg = Some((i, p, Vec::new(), None));
             } else if let Some((j, unescaped)) = unescaped_rhs {
@@ -446,29 +447,37 @@ pub fn format_like(input: TokenStream) -> TokenStream {
         );
     }
 
-    let expr = fmt_like.initial;
-    let mut token_stream = quote! { #expr };
+    let mut token_stream = fmt_like.initial;
 
     let positional_provided = fmt_like.exprs.len();
     let mut exprs = fmt_like.exprs.into_iter();
 
+    let comma = TokenTree::Punct(Punct::new(',', Spacing::Alone));
+
     for arg in args {
         token_stream = match arg {
             Arg::Str(string, range) => {
-                let str = LitStr::new(&string, str_span(range));
-                let parser = &fmt_like.str_parser;
+                let mut str = Literal::string(&string);
+                str.set_span(str_span(range));
 
-                quote! {
-                    #parser!(#token_stream, #str)
-                }
+                recurse_parser(
+                    &fmt_like.str_parser,
+                    token_stream
+                        .into_iter()
+                        .chain([comma.clone(), TokenTree::Literal(str)]),
+                )
             }
             Arg::Positional(p, range, modif) => {
                 if let Some(expr) = exprs.next() {
-                    let parser = &fmt_like.arg_parsers[p].parser;
-
-                    quote! {
-                        #parser!(#token_stream, #modif, #expr)
-                    }
+                    recurse_parser(
+                        &fmt_like.arg_parsers[p].parser,
+                        token_stream
+                            .into_iter()
+                            .chain([comma.clone()])
+                            .chain(modif)
+                            .chain([comma.clone()])
+                            .chain(expr),
+                    )
                 } else {
                     let npl = if positional_needed == 1 { "" } else { "s" };
                     let pverb = if positional_provided == 1 {
@@ -486,104 +495,193 @@ pub fn format_like(input: TokenStream) -> TokenStream {
                     );
                 }
             }
-            Arg::Inlined(p, idents, modif) => {
-                let parser = &fmt_like.arg_parsers[p].parser;
-
-                quote! {
-                    #parser!(#token_stream, #modif, #(#idents).*)
-                }
-            }
+            Arg::Inlined(p, idents, modif) => recurse_parser(
+                &fmt_like.arg_parsers[p].parser,
+                token_stream
+                    .into_iter()
+                    .chain([comma.clone()])
+                    .chain(modif)
+                    .chain([comma.clone()])
+                    .chain(idents),
+            ),
         }
     }
 
     // There should be no positional arguments left.
     if let Some(expr) = exprs.next() {
-        return compile_err(expr.span(), "argument never used");
+        return compile_err(
+            expr.into_iter().next().unwrap().span(),
+            "argument never used",
+        );
     }
 
-    token_stream.into()
+    token_stream
 }
 
 struct ArgParser {
-    delims: (LitChar, char),
-    parser: Path,
+    delims: [char; 2],
+    delim_span: Span,
+    parser: Ident,
     inline_only: bool,
 }
 
-impl ArgParser {
-    fn new(input: &ParseBuffer) -> syn::Result<Self> {
-        const VALID_DELIMS: &[[char; 2]] = &[['{', '}'], ['(', ')'], ['[', ']'], ['<', '>']];
-        let elems;
-        parenthesized!(elems in input);
-
-        let delims = {
-            let left: LitChar = elems.parse()?;
-
-            if let Some([_, right]) = VALID_DELIMS.iter().find(|[rhs, _]| left.value() == *rhs) {
-                (left, *right)
-            } else {
-                return Err(syn::Error::new_spanned(left, "is not a valid delimiter"));
-            }
-        };
-
-        elems.parse::<Token![,]>()?;
-        let parser = elems.parse()?;
-        elems.parse::<Token![,]>()?;
-        let inline_only = elems.parse::<LitBool>()?.value();
-
-        Ok(Self { delims, parser, inline_only })
-    }
-}
-
 struct FormatLike {
-    str_parser: Path,
+    str_parser: Ident,
     arg_parsers: Vec<ArgParser>,
-    initial: Expr,
-    str: LitStr,
-    exprs: Vec<Expr>,
+    initial: TokenStream,
+    str: String,
+    str_lit: Literal,
+    exprs: Vec<TokenStream>,
 }
 
-impl Parse for FormatLike {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let str_parser = input.parse()?;
-        input.parse::<Token![,]>()?;
+impl FormatLike {
+    fn parse(mut stream: impl Iterator<Item = TokenTree>) -> Result<Self, TokenStream> {
+        use TokenTree as TT;
 
-        let arg_parsers: Vec<ArgParser> = {
-            let arg_parsers;
-            bracketed!(arg_parsers in input);
+        let str_parser = get_ident(stream.next())?;
+
+        consume_comma(stream.next())?;
+
+        let arg_parsers = {
+            let group = match stream.next() {
+                Some(TT::Group(group)) if group.delimiter() == Delimiter::Bracket => group,
+                Some(other) => return Err(compile_err(other.span(), "expected a list")),
+                _ => return Err(compile_err(Span::mixed_site(), "expected a list")),
+            };
+
+            let mut arg_parsers = Vec::new();
+
+            let mut stream = group.stream().into_iter();
+
+            loop {
+                static INVALID_ERR: &str = "expected one of '{', '(', '[', or '<'";
+
+                let group = match stream.next() {
+                    Some(TT::Group(group)) if group.delimiter() == Delimiter::Parenthesis => group,
+                    None => break,
+                    Some(other) => return Err(compile_err(other.span(), "expected a tuple")),
+                };
+
+                let mut substream = group.stream().into_iter();
+
+                let (delims, delim_span) = match substream.next() {
+                    Some(TT::Literal(literal)) => match literal.to_string().as_str() {
+                        "'{'" => (['{', '}'], literal.span()),
+                        "'('" => (['(', ')'], literal.span()),
+                        "'['" => (['[', ']'], literal.span()),
+                        "'<'" => (['<', '>'], literal.span()),
+                        _ => return Err(compile_err(literal.span(), INVALID_ERR)),
+                    },
+                    Some(other) => return Err(compile_err(other.span(), INVALID_ERR)),
+                    _ => return Err(compile_err(Span::mixed_site(), INVALID_ERR)),
+                };
+
+                consume_comma(substream.next())?;
+
+                let parser = get_ident(substream.next())?;
+
+                consume_comma(substream.next())?;
+
+                let inline_only = match substream.next() {
+                    Some(TT::Ident(ident)) => match ident.to_string().as_str() {
+                        "true" => true,
+                        "false" => false,
+                        _ => {
+                            return Err(compile_err(
+                                ident.span(),
+                                format!("expected a bool, got {ident:?}"),
+                            ));
+                        }
+                    },
+                    Some(other) => {
+                        return Err(compile_err(
+                            other.span(),
+                            format!("expected a bool, got {other}"),
+                        ));
+                    }
+                    _ => return Err(compile_err(Span::mixed_site(), "expected a bool")),
+                };
+
+                arg_parsers.push(ArgParser { delims, delim_span, parser, inline_only });
+
+                _ = consume_comma(stream.next());
+            }
+
             arg_parsers
-                .parse_terminated(ArgParser::new, Token![,])?
-                .into_iter()
-                .collect()
         };
 
         if let Some((lhs, rhs)) = arg_parsers.iter().enumerate().find_map(|(i, lhs)| {
             arg_parsers.iter().enumerate().find_map(|(j, rhs)| {
                 (i != j)
-                    .then(|| (rhs.delims.1 == lhs.delims.1).then_some((lhs, rhs)))
+                    .then(|| (rhs.delims == lhs.delims).then_some((lhs, rhs)))
                     .flatten()
             })
         }) {
-            let l_err = syn::Error::new_spanned(&lhs.delims.0, "this delimiter");
-            let mut r_err = syn::Error::new_spanned(&rhs.delims.0, "is the same as this");
-            r_err.combine(l_err);
-            return Err(r_err);
+            return Err(TokenStream::from_iter([
+                compile_err(lhs.delim_span, "this delimiter"),
+                compile_err(rhs.delim_span, "is the same as this"),
+            ]));
         }
-        input.parse::<Token![,]>()?;
 
-        let initial = input.parse()?;
-        input.parse::<Token![,]>()?;
+        consume_comma(stream.next())?;
 
-        let str = input.parse()?;
+        let initial = {
+            let mut initial = Vec::new();
 
-        let exprs = if !input.is_empty() {
-            input.parse::<Token![,]>()?;
-            input
-                .parse_terminated(Expr::parse, Token![,])?
-                .into_iter()
-                .collect()
-        } else {
-            Vec::new()
+            for token in stream.by_ref() {
+                if let TokenTree::Punct(punct) = &token
+                    && punct.as_char() == ','
+                {
+                    break;
+                }
+
+                initial.push(token);
+            }
+
+            TokenStream::from_iter(initial)
+        };
+
+        let (str, str_lit) = match stream.next() {
+            Some(TokenTree::Literal(literal)) => {
+                let mut str = literal.to_string();
+                if str.starts_with('"') && str.ends_with('"') {
+                    str.pop();
+                    str.remove(0);
+                    (str, literal)
+                } else {
+                    return Err(compile_err(literal.span(), "expected a string literal"));
+                }
+            }
+            Some(other) => return Err(compile_err(other.span(), "expected a string literal")),
+            None => return Err(compile_err(Span::mixed_site(), "expected a string literal")),
+        };
+
+        let exprs = match stream.next() {
+            Some(TokenTree::Punct(punct)) if punct.as_char() == ',' => {
+                let mut exprs = Vec::new();
+
+                let mut tokens = Vec::new();
+
+                for token in stream {
+                    if let TokenTree::Punct(punct) = &token
+                        && punct.as_char() == ','
+                    {
+                        if !tokens.is_empty() {
+                            exprs.push(TokenStream::from_iter(tokens.drain(..)));
+                        }
+                    } else {
+                        tokens.push(token);
+                    }
+                }
+
+                if !tokens.is_empty() {
+                    exprs.push(TokenStream::from_iter(tokens));
+                }
+
+                exprs
+            }
+            Some(other) => return Err(compile_err(other.span(), "expected a comma")),
+            None => Vec::new(),
         };
 
         Ok(Self {
@@ -591,6 +689,7 @@ impl Parse for FormatLike {
             arg_parsers,
             initial,
             str,
+            str_lit,
             exprs,
         })
     }
@@ -598,8 +697,38 @@ impl Parse for FormatLike {
 
 enum Arg {
     Str(String, Range<usize>),
-    Positional(usize, Range<usize>, proc_macro2::TokenStream),
-    Inlined(usize, Vec<Ident>, proc_macro2::TokenStream),
+    Positional(usize, Range<usize>, TokenStream),
+    Inlined(usize, TokenStream, TokenStream),
+}
+
+fn recurse_parser(parser: &Ident, stream: impl Iterator<Item = TokenTree>) -> TokenStream {
+    let start = parser.span().start();
+
+    TokenStream::from_iter([
+        TokenTree::Ident(parser.clone()),
+        TokenTree::Punct({
+            let mut punct = Punct::new('!', Spacing::Alone);
+            punct.set_span(start);
+            punct
+        }),
+        TokenTree::Group(Group::new(Delimiter::Parenthesis, stream.collect())),
+    ])
+}
+
+fn consume_comma(value: Option<TokenTree>) -> Result<(), TokenStream> {
+    match value {
+        Some(TokenTree::Punct(punct)) if punct.as_char() == ',' => Ok(()),
+        Some(other) => Err(compile_err(other.span(), "Expected a comma")),
+        _ => Err(compile_err(Span::mixed_site(), "Expected a comma")),
+    }
+}
+
+fn get_ident(value: Option<TokenTree>) -> Result<Ident, TokenStream> {
+    match value {
+        Some(TokenTree::Ident(ident)) => Ok(ident),
+        Some(other) => Err(compile_err(other.span(), "Expected an identifier")),
+        _ => Err(compile_err(Span::mixed_site(), "Expected an identifier")),
+    }
 }
 
 fn extend_str_arg(args: &mut Vec<Arg>, char: char, i: usize) {
@@ -612,13 +741,57 @@ fn extend_str_arg(args: &mut Vec<Arg>, char: char, i: usize) {
 }
 
 fn compile_err(span: Span, msg: impl std::fmt::Display) -> TokenStream {
-    let compile_err = syn::Error::new(span, msg).into_compile_error();
+    let (start, end) = (span.start(), span.end());
 
-    let err = quote! {{
-        #compile_err
-    }};
-
-    err.into()
+    TokenStream::from_iter([
+        TokenTree::Punct({
+            let mut punct = Punct::new(':', Spacing::Joint);
+            punct.set_span(start);
+            punct
+        }),
+        TokenTree::Punct({
+            let mut punct = Punct::new(':', Spacing::Alone);
+            punct.set_span(start);
+            punct
+        }),
+        TokenTree::Ident(Ident::new("core", start)),
+        TokenTree::Punct({
+            let mut punct = Punct::new(':', Spacing::Joint);
+            punct.set_span(start);
+            punct
+        }),
+        TokenTree::Punct({
+            let mut punct = Punct::new(':', Spacing::Alone);
+            punct.set_span(start);
+            punct
+        }),
+        TokenTree::Ident({
+            let mut ident = Ident::new("compile_error", start);
+            ident.set_span(start);
+            ident
+        }),
+        TokenTree::Punct({
+            let mut punct = Punct::new('!', Spacing::Alone);
+            punct.set_span(start);
+            punct
+        }),
+        TokenTree::Group({
+            let mut group = Group::new(Delimiter::Brace, {
+                TokenStream::from_iter([TokenTree::Literal({
+                    let mut string = Literal::string(&msg.to_string());
+                    string.set_span(end);
+                    string
+                })])
+            });
+            group.set_span(end);
+            group
+        }),
+    ])
 }
 
-type CurrentArg = (usize, usize, Vec<Range<usize>>, Option<Range<usize>>);
+type CurrentArg = (
+    usize,
+    usize,
+    Vec<(Range<usize>, bool)>,
+    Option<Range<usize>>,
+);
