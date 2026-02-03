@@ -658,16 +658,33 @@ impl FormatLike {
                 let mut exprs = Vec::new();
 
                 let mut tokens = Vec::new();
+                let mut on_closure_args = false;
 
                 for token in stream {
                     if let TokenTree::Punct(punct) = &token
-                        && punct.as_char() == ','
+                        && (punct.as_char() == ',' && !on_closure_args)
                     {
                         if !tokens.is_empty() {
                             exprs.push(TokenStream::from_iter(tokens.drain(..)));
                         }
                     } else {
                         tokens.push(token);
+                        on_closure_args = match tokens.as_slice() {
+                            [rest @ .., TokenTree::Punct(punct)] if punct.as_char() == '|' => {
+                                match rest {
+                                    [] => true,
+                                    [.., TokenTree::Punct(punct)] => punct.as_char() != '|',
+                                    [.., TokenTree::Ident(ident)]
+                                        if ["move", "async"]
+                                            .contains(&ident.to_string().as_str()) =>
+                                    {
+                                        true
+                                    }
+                                    _ => false,
+                                }
+                            }
+                            _ => on_closure_args,
+                        }
                     }
                 }
 
